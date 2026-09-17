@@ -27,8 +27,49 @@ typedef struct
 {
     SPI_RegDef_t *pSPIx;         /* Base address of the SPI peripheral */
     SPI_Config_t SPIConfig;      /* SPI configuration settings */
+    uint8_t *pTxBuffer;           /* Pointer to transmit buffer */
+    uint8_t *pRxBuffer;           /* Pointer to receive buffer */
+    uint32_t TxLen;               /* Length of data to transmit */
+    uint32_t RxLen;               /* Length of data to receive */
+    uint8_t TxState;              /* Transmission state */
+    uint8_t RxState;              /* Reception state */
 }SPI_Handle_t;
 
+/*@SPI_DeviceMode*/
+#define SPI_DEVICE_MODE_MASTER 1
+#define SPI_DEVICE_MODE_SLAVE  0
+/*@SPI_BusConfig*/
+#define SPI_BUS_CONFIG_FULL_DUPLEX 1
+#define SPI_BUS_CONFIG_HALF_DUPLEX 0
+#define SPI_BUS_CONFIG_SIMPLEX     2
+/*@SPI_DFF*/
+#define SPI_DFF_8_BIT  0
+#define SPI_DFF_16_BIT 1
+/*@SPI_CPOL*/
+#define SPI_CPOL_LOW  0
+#define SPI_CPOL_HIGH 1
+/*@SPI_CPHA*/
+#define SPI_CPHA_FIRST_EDGE 0
+#define SPI_CPHA_SECOND_EDGE 1
+/*@SPI_SSM*/
+#define SPI_SSM_ENABLE  1
+#define SPI_SSM_DISABLE 0
+/*@SPI_SSI*/
+#define SPI_SSI_ENABLE  1
+#define SPI_SSI_DISABLE 0
+/*@SPI_SclkSpeed*/
+#define SPI_SCLK_SPEED_DIV2   0
+#define SPI_SCLK_SPEED_DIV4   1
+#define SPI_SCLK_SPEED_DIV8   2
+#define SPI_SCLK_SPEED_DIV16  3
+#define SPI_SCLK_SPEED_DIV32  4
+#define SPI_SCLK_SPEED_DIV64  5
+#define SPI_SCLK_SPEED_DIV128 6
+#define SPI_SCLK_SPEED_DIV256 7
+/*@SPI applciation states*/
+#define SPI_READY         0
+#define SPI_BUSY_IN_RX    1
+#define SPI_BUSY_IN_TX    2
 
 /*
  * ====================================================================
@@ -50,7 +91,12 @@ void SPI_IRQInterruptConfig(uint8_t IRQNumber, uint8_t EnOrDi);
 void SPI_IRQPriorityConfig(uint8_t IRQNumber, uint32_t IRQPriority);
 void SPI_IRQHandling(SPI_Handle_t *pHandle);
 
+uint8_t SPI_SendDataIT(SPI_Handle_t *pHandle, uint8_t *pTxBuffer, uint32_t Len);
+uint8_t SPI_ReceiveDataIT(SPI_Handle_t *pHandle, uint8_t *pRxBuffer, uint32_t Len);
 
+/* IRQ Configuration and ISR Handling */
+void SPI_IRQInterruptConfig(uint8_t IRQNumber, uint8_t EnorDi);
+void SPI_IRQPriorityConfig(uint8_t IRQNumber, uint32_t IRQPriority);
 
 
 

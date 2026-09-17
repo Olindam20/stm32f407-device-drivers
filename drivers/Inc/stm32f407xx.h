@@ -317,4 +317,11 @@ typedef struct
 #define IRQ_NO_EXTI9_5      23
 #define IRQ_NO_EXTI15_10    40
 
+
+
+/*IRQ for SPI*/
+#define IRQ_NO_SPI1         35
+#define IRQ_NO_SPI2         36
+#define IRQ_NO_SPI3         51
+
 #endif /* INC_STM32F407XX_H_ */
