@@ -1,4 +1,4 @@
-"./Src/07_spi_txonly_arduino.o"
+"./Src/008_spi_tx_rx.o"
 "./Src/syscalls.o"
 "./Src/sysmem.o"
 "./Startup/startup_stm32f407vetx.o"
