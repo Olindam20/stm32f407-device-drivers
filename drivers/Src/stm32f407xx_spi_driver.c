@@ -7,6 +7,11 @@
 
 #include "stm32f407xx_spi_driver.h"
 
+/* Private helper function prototypes */
+static void spi_txe_interrupt_handle(SPI_Handle_t *pHandle);
+static void spi_rxne_interrupt_handle(SPI_Handle_t *pHandle);
+static void spi_ovr_err_interrupt_handle(SPI_Handle_t *pHandle);
+
 /*********************************************************************
  * @fn                - SPI_PeriClockControl
  *
@@ -414,7 +419,7 @@ void SPI_IRQHandling(SPI_Handle_t *pHandle)
 
     //check for overrun error
     temp1 = pHandle->pSPIx->SR & (1 << 6);
-    temp2 = pHandle->pSPIx->CR2 & (1 << 5);
+    temp2 = pHandle->pSPIx->CR2 & (1 << 5); 
     if(temp1 && temp2)
     {
         //handle overrun error
@@ -444,6 +449,7 @@ uint8_t SPI_SendDataIT(SPI_Handle_t *pHandle, uint8_t *pTxBuffer, uint32_t Len)
        
     }
      //4. The rest of the data transmission will be handled in the ISR when TXE flag is set
+     
      return state;
 }
 
@@ -467,5 +473,112 @@ uint8_t SPI_ReceiveDataIT(SPI_Handle_t *pHandle, uint8_t *pRxBuffer, uint32_t Le
     }
      //4. The rest of the data reception will be handled in the ISR when RXNE flag is set
      return state;
-   
 }
+
+/*********************************************************************
+ *                     Private Helper Functions
+ *********************************************************************/
+
+static void spi_txe_interrupt_handle(SPI_Handle_t *pHandle)
+{
+    // 1. Check DFF bit in CR1 (16-bit vs 8-bit)
+    if(pHandle->pSPIx->CR1 & (1 << 11)) // 16-bit DFF
+    {
+        // Load 16 bits of data into DR
+        pHandle->pSPIx->DR = *((uint16_t*)pHandle->pTxBuffer);
+        pHandle->TxLen -= 2;
+        pHandle->pTxBuffer += 2;
+    }
+    else // 8-bit DFF
+    {
+        // Load 8 bits of data into DR
+        pHandle->pSPIx->DR = *(pHandle->pTxBuffer);
+        pHandle->TxLen--;
+        pHandle->pTxBuffer++;
+    }
+
+    // 2. Check if transmission is complete (TxLen reaches 0)
+    if(!pHandle->TxLen)
+    {
+        // Close transmission
+        SPI_CloseTransmission(pHandle);
+
+        // Inform the application that transmission is complete
+        SPI_ApplicationEventCallback(pHandle, SPI_EVENT_TX_CMPLT);
+    }
+}
+
+static void spi_rxne_interrupt_handle(SPI_Handle_t *pHandle)
+{
+    // 1. Check DFF bit in CR1 (16-bit vs 8-bit)
+    if(pHandle->pSPIx->CR1 & (1 << 11)) // 16-bit DFF
+    {
+        // Read 16 bits of data from DR
+        *((uint16_t*)pHandle->pRxBuffer) = (uint16_t)pHandle->pSPIx->DR;
+        pHandle->RxLen -= 2;
+        pHandle->pRxBuffer += 2;
+    }
+    else // 8-bit DFF
+    {
+        // Read 8 bits of data from DR
+        *(pHandle->pRxBuffer) = (uint8_t)pHandle->pSPIx->DR;
+        pHandle->RxLen--;
+        pHandle->pRxBuffer++;
+    }
+
+    // 2. Check if reception is complete (RxLen reaches 0)
+    if(!pHandle->RxLen)
+    {
+        // Close reception
+        SPI_CloseReception(pHandle);
+
+        // Inform the application that reception is complete
+        SPI_ApplicationEventCallback(pHandle, SPI_EVENT_RX_CMPLT);
+    }
+}
+
+static void spi_ovr_err_interrupt_handle(SPI_Handle_t *pHandle)
+{
+    // Clear OVR flag if peripheral is not transmitting
+    if(pHandle->TxState != SPI_BUSY_IN_TX)
+    {
+        SPI_ClearOVRFlag(pHandle->pSPIx);
+    }
+
+    // Inform the application of the overrun error
+    SPI_ApplicationEventCallback(pHandle, SPI_EVENT_OVR_ERR);
+}
+
+/*********************************************************************
+ *                     Other Peripheral Control APIs
+ *********************************************************************/
+
+void SPI_CloseTransmission(SPI_Handle_t *pHandle)
+{
+    pHandle->pSPIx->CR2 &= ~(1 << 7); // Clear TXEIE bit in CR2
+    pHandle->pTxBuffer = NULL;
+    pHandle->TxLen = 0;
+    pHandle->TxState = SPI_READY;
+}
+
+void SPI_CloseReception(SPI_Handle_t *pHandle)
+{
+    pHandle->pSPIx->CR2 &= ~(1 << 6); // Clear RXNEIE bit in CR2
+    pHandle->pRxBuffer = NULL;
+    pHandle->RxLen = 0;
+    pHandle->RxState = SPI_READY;
+}
+
+void SPI_ClearOVRFlag(SPI_RegDef_t *pSPIx)
+{
+    uint8_t temp;
+    temp = pSPIx->DR;
+    temp = pSPIx->SR;
+    (void)temp;
+}
+
+__attribute__((weak)) void SPI_ApplicationEventCallback(SPI_Handle_t *pHandle, uint8_t AppEv)
+{
+    // This is a weak implementation. The user application may override this function.
+}
+
