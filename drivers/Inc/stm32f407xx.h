@@ -286,6 +286,8 @@ typedef struct
 #define DISABLE                     0
 #define SET                         ENABLE
 #define RESET                       DISABLE
+#define FLAG_RESET                  RESET
+#define FLAG_SET                    SET
 
 /* Macro to convert GPIO base address to port code */
 #define GPIO_BASEADDR_TO_CODE(pGPIOx) (((pGPIOx) == GPIOA) ? 0 : \

@@ -17,6 +17,8 @@ static const uint16_t AHB_PreScaler[8]  = {2, 4, 8, 16, 64, 128, 256, 512};
 static const uint8_t  APB1_PreScaler[4] = {2, 4, 8, 16};
 static void I2C_GenerateStartCondition(I2C_RegDef_t *pI2Cx)
 {
+
+
     pI2Cx->CR1 |= (1 << 8); // Set the START bit in CR1 to generate a start condition
 }
 uint32_t RCC_GetPCLK1Value(void)
@@ -255,6 +257,7 @@ void I2C_MasterTransmit(I2C_Handle_t *pI2CHandle, uint8_t *pTxData, uint32_t len
     uint32_t temp;
     temp = pI2CHandle->pI2Cx->SR1;
     temp = pI2CHandle->pI2Cx->SR2;
+    (void)temp;
 
     //6. Send data bytes
     for(uint32_t i = 0; i < len; i++)
@@ -265,11 +268,11 @@ void I2C_MasterTransmit(I2C_Handle_t *pI2CHandle, uint8_t *pTxData, uint32_t len
     }
 
     //7. Wait until BTF is set
+    while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_TXE));
     while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_BTF));
 
     //8. Generate stop condition
     pI2CHandle->pI2Cx->CR1 |= (1 << 9); // Set STOP bit in CR1  
-
 }
 
 
@@ -289,7 +292,72 @@ void I2C_MasterTransmit(I2C_Handle_t *pI2CHandle, uint8_t *pTxData, uint32_t len
  *********************************************************************/
 void I2C_MasterReceive(I2C_Handle_t *pI2CHandle, uint8_t *pRxData, uint32_t len, uint8_t slaveAddr)
 {
-    // Write your code here
+      // Re-enable ACKing for future receptions
+    if(pI2CHandle->I2C_Config.I2C_ACKControl == I2C_ACKControl_EN)
+    {
+        I2C_ManageAcking(pI2CHandle->pI2Cx, ENABLE);
+    }
+    // 1. Generate START condition
+    I2C_GenerateStartCondition(pI2CHandle->pI2Cx);
+
+    // 2. Confirm SB is set in SR1
+    while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_SB));
+
+    // 3. Send slave address with READ bit (1)
+    pI2CHandle->pI2Cx->DR = (slaveAddr << 1) | (1 << 0);
+
+    // 4. Wait for ADDR flag to be set in SR1
+    while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_ADDR));
+
+    // Procedure to read only 1 byte from slave
+    if(len == 1)
+    {
+        // Disable ACKing
+        I2C_ManageAcking(pI2CHandle->pI2Cx, DISABLE);
+
+        // Clear ADDR flag (Read SR1 then SR2)
+        uint32_t dummyRead = pI2CHandle->pI2Cx->SR1;
+        dummyRead = pI2CHandle->pI2Cx->SR2;
+        (void)dummyRead;
+
+        // Generate STOP condition
+        pI2CHandle->pI2Cx->CR1 |= (1 << 9);
+
+        // Wait until RXNE becomes 1
+        while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_RXNE));
+
+        // Read data into buffer
+        *pRxData = pI2CHandle->pI2Cx->DR;
+    }
+    // Procedure to read multiple bytes from slave
+    else if(len > 1)
+    {
+        // Clear ADDR flag
+        uint32_t dummyRead = pI2CHandle->pI2Cx->SR1;
+        dummyRead = pI2CHandle->pI2Cx->SR2;
+        (void)dummyRead;
+
+        for(uint32_t i = len; i > 0; i--)
+        {
+            // Wait until RXNE becomes 1
+            while(!I2C_GetFlagStatus(pI2CHandle->pI2Cx, I2C_FLAG_RXNE));
+
+            if(i == 2) // When only 2 bytes are remaining
+            {
+                // Disable ACKing
+                I2C_ManageAcking(pI2CHandle->pI2Cx, DISABLE);
+
+                // Generate STOP condition
+                pI2CHandle->pI2Cx->CR1 |= (1 << 9);
+            }
+
+            // Read the data from data register into buffer
+            *pRxData = pI2CHandle->pI2Cx->DR;
+            pRxData++;
+        }
+    }
+
+  
 }
 
 /*********************************************************************
@@ -389,7 +457,14 @@ uint8_t I2C_GetFlagStatus(I2C_RegDef_t *pI2Cx, uint32_t FlagName)
  *********************************************************************/
 void I2C_ManageAcking(I2C_RegDef_t *pI2Cx, uint8_t EnorDi)
 {
-    pI2Cx->CR1 |= (EnorDi << 10); // Set or clear ACK bit
+    if(EnorDi == ENABLE)
+    {
+        pI2Cx->CR1 |= (1 << 10);   // Set ACK bit
+    }
+    else
+    {
+        pI2Cx->CR1 &= ~(1 << 10);  // Clear ACK bit (Sends NACK!)
+    }
 }
 
 /*********************************************************************
