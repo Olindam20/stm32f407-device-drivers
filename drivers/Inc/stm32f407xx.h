@@ -67,8 +67,7 @@
 
 #define USART2_BASEADDR    (APB1_BASEADDR + 0x4400U)
 #define USART3_BASEADDR    (APB1_BASEADDR + 0x4800U)
-#define UART4_BASEADDR     (APB1_BASEADDR + 0x4C00U)
-#define UART5_BASEADDR     (APB1_BASEADDR + 0x5000U)
+#define USART5_BASEADDR     (APB1_BASEADDR + 0x5000U)
 
 /*
  base address of peripherels on APB2bus
@@ -182,6 +181,18 @@ typedef struct
      __vo uint32_t FLTR;      /*!< I2C FLTR register,                Address offset: 0x24 */
 }I2C_RegDef_t;
 
+
+typedef struct
+{
+     __vo uint32_t SR;         /*!< USART Status register,            Address offset: 0x00 */
+     __vo uint32_t DR;         /*!< USART Data register,              Address offset: 0x04 */
+     __vo uint32_t BRR;        /*!< USART Baud rate register,         Address offset: 0x08 */
+     __vo uint32_t CR1;        /*!< USART Control register 1,         Address offset: 0x0C */
+     __vo uint32_t CR2;        /*!< USART Control register 2,         Address offset: 0x10 */
+     __vo uint32_t CR3;        /*!< USART Control register 3,         Address offset: 0x14 */
+     __vo uint32_t GTPR;       /*!< USART Guard time and prescaler register, Address offset: 0x18 */
+}USART_RegDef_t;
+
 /* peripheral definitions (GPIO) */
 #define GPIOA               ((GPIO_RegDef_t*)GPIOA_BASEADDR)
 #define GPIOB               ((GPIO_RegDef_t*)GPIOB_BASEADDR)
@@ -213,6 +224,16 @@ typedef struct
 #define I2C1                ((I2C_RegDef_t*)I2C1_BASEADDR)
 #define I2C2                ((I2C_RegDef_t*)I2C2_BASEADDR)
 #define I2C3                ((I2C_RegDef_t*)I2C3_BASEADDR)
+#define I2C4                ((I2C_RegDef_t*)I2C4_BASEADDR)
+
+
+/*peripheral definitions (USART) */
+#define USART1              ((USART_RegDef_t*)USART1_BASEADDR)
+#define USART2              ((USART_RegDef_t*)USART2_BASEADDR)
+#define USART3              ((USART_RegDef_t*)USART3_BASEADDR)
+#define USART4              ((USART_RegDef_t*)USART4_BASEADDR)
+#define USART5              ((USART_RegDef_t*)USART5_BASEADDR)
+#define USART6              ((USART_RegDef_t*)USART6_BASEADDR)
 
 
 /*Clock enable macros for GPIOx peripherals */
@@ -259,18 +280,20 @@ typedef struct
 #define RCC_SPI3_CLK_DI()           (RCC->APB1ENR &= ~(1 << 15))
 
 /*clock enable macros for uart peripherals */
-#define RCC_UART1_CLK_EN()          (RCC->APB2ENR |= (1 << 14))
-#define RCC_UART2_CLK_EN()          (RCC->APB1ENR |= (1 << 17))
-#define RCC_UART3_CLK_EN()          (RCC->APB1ENR |= (1 << 18))
-#define RCC_UART4_CLK_EN()          (RCC->APB1ENR |= (1 << 19))
-#define RCC_UART5_CLK_EN()          (RCC->APB1ENR |= (1 << 20))
+#define RCC_USART1_CLK_EN()          (RCC->APB2ENR |= (1 << 4))
+#define RCC_USART2_CLK_EN()          (RCC->APB1ENR |= (1 << 17))
+#define RCC_USART3_CLK_EN()          (RCC->APB1ENR |= (1 << 18))
+#define RCC_USART4_CLK_EN()          (RCC->APB1ENR |= (1 << 19))
+#define RCC_USART5_CLK_EN()          (RCC->APB1ENR |= (1 << 20))
+#define RCC_USART6_CLK_EN()          (RCC->APB2ENR |= (1 << 5))
 
 /*clock disable macros for uart peripherals */
-#define RCC_UART1_CLK_DI()          (RCC->APB2ENR &= ~(1 << 14))
-#define RCC_UART2_CLK_DI()          (RCC->APB1ENR &= ~(1 << 17))
-#define RCC_UART3_CLK_DI()          (RCC->APB1ENR &= ~(1 << 18))
-#define RCC_UART4_CLK_DI()          (RCC->APB1ENR &= ~(1 << 19))
-#define RCC_UART5_CLK_DI()          (RCC->APB1ENR &= ~(1 << 20))
+#define RCC_USART1_CLK_DI()          (RCC->APB2ENR &= ~(1 << 4))
+#define RCC_USART2_CLK_DI()          (RCC->APB1ENR &= ~(1 << 17))
+#define RCC_USART3_CLK_DI()          (RCC->APB1ENR &= ~(1 << 18))
+#define RCC_USART4_CLK_DI()          (RCC->APB1ENR &= ~(1 << 19))
+#define RCC_USART5_CLK_DI()          (RCC->APB1ENR &= ~(1 << 20))
+#define RCC_USART6_CLK_DI()          (RCC->APB2ENR &= ~(1 << 5))
 
 
 
@@ -278,9 +301,9 @@ typedef struct
 
 
 /*clock enable for SYSCFG*/
-#define RCC_SYSCFG_CLK_EN()         (RCC->APB2ENR |= (1 << 0))   
+#define RCC_SYSCFG_CLK_EN()         (RCC->APB2ENR |= (1 << 14))   
 /*clock disable for SYSCFG*/
-#define RCC_SYSCFG_CLK_DI()         (RCC->APB2ENR &= ~(1 << 0))
+#define RCC_SYSCFG_CLK_DI()         (RCC->APB2ENR &= ~(1 << 14))
 
 #define ENABLE                      1
 #define DISABLE                     0
@@ -402,5 +425,102 @@ typedef struct
 #define IRQ_NO_I2C2_ER        34
 #define IRQ_NO_I2C3_EV        72
 #define IRQ_NO_I2C3_ER        73
+
+
+
+/*I2C application states*/
+#define I2C_READY             0
+#define I2C_BUSY_RX          1
+#define I2C_BUSY_TX           2
+
+
+
+
+/*
+ * ====================================================================
+ *         Bit position definitions of USART peripheral registers
+ * ====================================================================
+ */
+
+/* Bit positions for USART_SR register */
+#define USART_SR_PE            0
+#define USART_SR_FE            1
+#define USART_SR_NF            2
+#define USART_SR_ORE           3
+#define USART_SR_IDLE          4
+#define USART_SR_RXNE          5
+#define USART_SR_TC            6
+#define USART_SR_TXE           7
+#define USART_SR_LBD           8
+#define USART_SR_CTS           9
+
+/* Bit positions for USART_BRR register */
+#define USART_BRR_DIV_Fraction 0
+#define USART_BRR_DIV_Mantissa 4
+
+/* Bit positions for USART_CR1 register */
+#define USART_CR1_SBK          0
+#define USART_CR1_RWU          1
+#define USART_CR1_RE           2
+#define USART_CR1_TE           3
+#define USART_CR1_IDLEIE       4
+#define USART_CR1_RXNEIE       5
+#define USART_CR1_TCIE         6
+#define USART_CR1_TXEIE        7
+#define USART_CR1_PEIE         8
+#define USART_CR1_PS           9
+#define USART_CR1_PCE          10
+#define USART_CR1_WAKE         11
+#define USART_CR1_M            12
+#define USART_CR1_UE           13
+#define USART_CR1_OVER8        15
+
+/* Bit positions for USART_CR2 register */
+#define USART_CR2_ADD          0
+#define USART_CR2_LBDL         5
+#define USART_CR2_LBDIE        6
+#define USART_CR2_LBCL         8
+#define USART_CR2_CPHA         9
+#define USART_CR2_CPOL         10
+#define USART_CR2_CLKEN        11
+#define USART_CR2_STOP         12
+#define USART_CR2_LINEN        14
+
+/* Bit positions for USART_CR3 register */
+#define USART_CR3_EIE          0
+#define USART_CR3_IREN         1
+#define USART_CR3_IRLP         2
+#define USART_CR3_HDSEL        3
+#define USART_CR3_NACK         4
+#define USART_CR3_SCEN         5
+#define USART_CR3_DMAR         6
+#define USART_CR3_DMAT         7
+#define USART_CR3_RTSE         8
+#define USART_CR3_CTSE         9
+#define USART_CR3_CTSIE        10
+#define USART_CR3_ONEBIT       11
+
+/* IRQ Numbers for USART/UART */
+#define IRQ_NO_USART1          37
+#define IRQ_NO_USART2          38
+#define IRQ_NO_USART3          39
+#define IRQ_NO_UART4           52
+#define IRQ_NO_UART5           53
+#define IRQ_NO_USART6          71
+
+/* USART Application States */
+#define USART_BUSY_IN_RX       1
+#define USART_BUSY_IN_TX       2
+#define USART_READY            0
+
+/* USART Application Events */
+#define USART_EVENT_TX_CMPLT   0
+#define USART_EVENT_RX_CMPLT   1
+#define USART_EVENT_IDLE       2
+#define USART_EVENT_CTS        3
+#define USART_EVENT_PE         4
+#define USART_ERR_FE           5
+#define USART_ERR_NE           6
+#define USART_ERR_ORE          7
 
 #endif /* INC_STM32F407XX_H_ */

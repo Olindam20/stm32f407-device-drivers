@@ -20,6 +20,14 @@ typedef struct
 {
     I2C_RegDef_t *pI2Cx; /* This holds the base address of I2Cx(x:0,1,2) peripheral */
     I2C_Config_t I2C_Config; /* This holds I2C configuration settings */
+    uint8_t *pTxBuffer; /* To store the app. Tx buffer address */
+    uint8_t *pRxBuffer; /* To store the app. Rx buffer address */   
+    uint32_t TxLen;     /* To store Tx length */
+    uint32_t RxLen;     /* To store Rx length */
+    uint8_t TxRxState;  /* To store communication state */
+    uint8_t DevAddr;    /* To store slave/device address */
+    uint32_t RxSize;    /* To store Rx size */
+    uint8_t Sr;         /* To store repeated start value */
 }I2C_Handle_t;
 
 
@@ -70,6 +78,13 @@ typedef struct
 #define I2C_ENABLE_SR           1
 
 /*
+ * @I2C_APPLICATION_STATES
+ */
+#define I2C_READY               0
+#define I2C_BUSY_IN_RX          1
+#define I2C_BUSY_IN_TX          2
+
+/*
  * ====================================================================
  *                 APIs supported by this I2C driver
  * ====================================================================
@@ -93,10 +108,18 @@ uint8_t I2C_SlaveReceive(I2C_RegDef_t *pI2Cx);
 /* IRQ Configuration and ISR Handling */
 void I2C_IRQInterruptConfig(uint8_t IRQNumber, uint8_t EnorDi);
 void I2C_IRQPriorityConfig(uint8_t IRQNumber, uint32_t IRQPriority);
+void I2C_EV_IRQHandling(I2C_Handle_t *pI2CHandle);
+void I2C_ER_IRQHandling(I2C_Handle_t *pI2CHandle);
 
 /* Other Peripheral Control APIs */
 void I2C_PeripheralControl(I2C_RegDef_t *pI2Cx, uint8_t EnorDi);
 uint8_t I2C_GetFlagStatus(I2C_RegDef_t *pI2Cx, uint32_t FlagName);
 void I2C_ManageAcking(I2C_RegDef_t *pI2Cx, uint8_t EnorDi);
+
+
+/* Data Send and Receive (Master Mode) non-blocking */
+uint8_t I2C_MasterTransmitIT(I2C_Handle_t *pI2CHandle, uint8_t *pTxData, uint32_t len, uint8_t slaveAddr, uint8_t Sr);
+uint8_t I2C_MasterReceiveIT(I2C_Handle_t *pI2CHandle, uint8_t *pRxData, uint32_t len, uint8_t slaveAddr, uint8_t Sr);
+
 
 #endif /* INC_STM32F407XX_I2C_DRIVER_H_ */
