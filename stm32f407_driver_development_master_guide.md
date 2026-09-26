@@ -1,14 +1,28 @@
 # Bare-Metal STM32F407 Device Driver Development Master Guide
-### *Comprehensive Architecture, Implementation Notes, Hardware Pitfalls & Embedded Interview Reference*
+### *Comprehensive Architecture, Implementation Notes, Sequence Flow Diagrams & Embedded Interview Reference*
 
 ---
 
 ## 📑 Table of Contents
 1. [Core MCU & Driver Architecture Overview](#1-core-mcu--driver-architecture-overview)
 2. [GPIO Driver (General Purpose Input/Output)](#2-gpio-driver)
+   - [2.1 Hardware Registers & Mode Matrix](#21-hardware-registers)
+   - [2.2 EXTI Interrupt Flow Diagram](#22-exti--gpio-interrupt-flow-diagram)
 3. [SPI Driver (Serial Peripheral Interface)](#3-spi-driver)
+   - [3.1 Hardware Architecture & Clock Modes](#31-hardware-architecture--frame-mechanics)
+   - [3.2 SPI Master Transmit Sequence Diagram](#32-spi-master-transmit-sequence-diagram)
+   - [3.3 SPI Full-Duplex Transmit & Receive Sequence Diagram](#33-spi-full-duplex-transmit--receive-sequence-diagram)
 4. [I2C Driver (Inter-Integrated Circuit)](#4-i2c-driver)
+   - [4.1 Bus Architecture & Pull-up Math](#41-bus-architecture--signal-dynamics)
+   - [4.2 I2C Master Transmit Sequence Diagram](#42-i2c-master-transmit-sequence-diagram)
+   - [4.3 I2C Single-Byte Read Sequence Diagram (Len = 1)](#43-i2c-single-byte-read-sequence-diagram-len--1)
+   - [4.4 I2C Multi-Byte Read Sequence Diagram (Len > 1)](#44-i2c-multi-byte-read-sequence-diagram-len--1)
+   - [4.5 I2C Non-Blocking Interrupt ISR State Machine](#45-i2c-non-blocking-interrupt-isr-state-machine)
 5. [USART Driver (Universal Synchronous/Asynchronous Receiver Transmitter)](#5-usart-driver)
+   - [5.1 Frame Format & Oversampling](#51-asynchronous-serial-frame-format)
+   - [5.2 Fixed-Point Baud Rate Calculation](#52-fixed-point-baud-rate-calculation-brr)
+   - [5.3 USART Transmit Sequence Diagram (Blocking & Non-Blocking)](#53-usart-transmit-sequence-diagram)
+   - [5.4 USART Receive Sequence Diagram (Blocking & Non-Blocking)](#54-usart-receive-sequence-diagram)
 6. [ARM Cortex-M4 NVIC & Interrupt Subsystem](#6-arm-cortex-m4-nvic--interrupt-subsystem)
 7. [Comprehensive Embedded Interview Question Bank](#7-comprehensive-embedded-interview-question-bank)
 
@@ -41,12 +55,6 @@ graph TD
     APB2 --> SYSCFG["SYSCFG / EXTI"]
 ```
 
-### 1.2 Driver Design Philosophy
-All drivers are structured using clean **Object-Oriented C (CMSIS-style)**:
-1. **Peripheral Register Definition Structures (`xxx_RegDef_t`)**: Maps peripheral hardware memory directly via struct offsets and `__vo` (volatile) qualifiers.
-2. **Configuration Structures (`xxx_Config_t`)**: Holds user-selected modes, speeds, word lengths, parity, baud rates, and pin options.
-3. **Handle Structures (`xxx_Handle_t`)**: Bundles the base register pointer, the config struct, plus non-blocking state variables (`pTxBuffer`, `pRxBuffer`, `TxLen`, `RxLen`, `TxRxState`).
-
 ---
 
 ## 2. GPIO Driver
@@ -63,22 +71,28 @@ Each GPIO port has 10 registers (32-bit each):
 * `LCKR`: Port Configuration Lock Register (Freezes pin configuration until next reset).
 * `AFR[0] / AFR[1]`: Alternate Function Low (`AFRL` for Pins 0-7) and High (`AFRH` for Pins 8-15) (4 bits per pin).
 
-### 2.2 Key Operational Concepts
-* **Push-Pull vs Open-Drain**:
-  * **Push-Pull**: Uses both P-MOS and N-MOS. Actively drives $V_{DD}$ (HIGH) and $V_{SS}$ (LOW). Used for high-speed signals, SPI, UART TX.
-  * **Open-Drain**: P-MOS is disabled. Only N-MOS is active. Drives LOW actively, but floats (Hi-Z) when HIGH. Requires an external pull-up resistor. Used for I2C (wired-AND) and shared buses.
-* **Alternate Function Selection**:
-  * $AFR\_index = pinNumber / 8$ (0 for AFRL, 1 for AFRH).
-  * $AFR\_shift = (pinNumber \% 8) \times 4$.
+### 2.2 EXTI & GPIO Interrupt Flow Diagram
 
-### 2.3 EXTI & GPIO Interrupt Architecture
-1. Microcontroller pin cannot connect directly to NVIC for interrupts; it routes through the **EXTI (Extended Interrupt and Event Controller)**.
-2. **SYSCFG Peripheral**: Selects which GPIO port (A, B, C...) maps to a specific EXTI line (EXTI0 to EXTI15).
-   * **Rule**: Only ONE Port Pin per line number can be active for interrupts simultaneously (e.g. `PA0`, `PB0`, `PC0` share `EXTI0`).
-   * `SYSCFG_EXTICR1` to `SYSCFG_EXTICR4`: 4 bits per line.
-3. **Trigger Selection**: Configured in `EXTI_RTSR` (Rising Trigger) and `EXTI_FTSR` (Falling Trigger).
-4. **Interrupt Masking**: Unmask in `EXTI_IMR`.
-5. **Clearing Pending Bit**: Write `1` to `EXTI_PR` to clear the pending flag.
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Pin as External Signal (e.g. Button)
+    participant SYSCFG as SYSCFG_EXTICR
+    participant EXTI as EXTI Controller
+    participant NVIC as ARM Cortex-M4 NVIC
+    participant ISR as EXTIx_IRQHandler
+    participant App as Application Callback
+
+    Pin->>SYSCFG: Voltage transition on Pin (e.g. PA0)
+    SYSCFG->>EXTI: Route Port A to EXTI Line 0
+    EXTI->>EXTI: Check Edge Trigger (RTSR / FTSR)
+    EXTI->>EXTI: Check Interrupt Mask (IMR)
+    EXTI->>NVIC: Set Pending Flag in EXTI_PR & Assert IRQ Line
+    NVIC->>NVIC: Check Priority & Core Exception State
+    NVIC->>ISR: Vector to EXTI0_IRQHandler()
+    ISR->>EXTI: Clear Pending Bit in EXTI_PR (write 1 to PR)
+    ISR->>App: Call GPIO_ApplicationEventCallback()
+```
 
 ---
 
@@ -92,85 +106,178 @@ Each GPIO port has 10 registers (32-bit each):
   * **Mode 2 (`CPOL=1, CPHA=0`)**: SCLK idles HIGH. Data sampled on leading (falling) edge, shifted on rising edge.
   * **Mode 3 (`CPOL=1, CPHA=1`)**: SCLK idles HIGH. Data sampled on trailing (rising) edge, shifted on falling edge.
 
-```
-Mode 0: SCK Idle LOW  ─┐   ┌─┐   ┌─┐   ┌─┐
-                       └───┘ └───┘ └───┘ └───
-        Sampling:        ▲     ▲     ▲
+### 3.2 SPI Master Transmit Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant SPI as SPI Peripheral (STM32)
+    participant Slave as SPI Slave Device
+
+    App->>SPI: Enable SPI (CR1: SPE=1, SSI=1)
+    loop For each Data Byte / Word (Len bytes)
+        App->>SPI: Poll until TXE flag == 1 (SR: TXE=1)
+        App->>SPI: Write byte into SPI_DR
+        SPI->>SPI: Shift byte from DR into Shift Register
+        SPI->>Slave: Clock out bits over MOSI with SCLK
+    end
+    Note over App,SPI: Critical Closing Sequence
+    App->>SPI: Wait until TXE == 1 (DR is empty)
+    App->>SPI: Wait until BSY == 0 (Shift Register is done)
+    App->>SPI: Disable SPI (CR1: SPE=0)
 ```
 
-### 3.2 Slave Select Management (`SSM` & `SSI`)
-* **Hardware Slave Management (`SSM = 0`)**: Hardware manages NSS pin. If multi-master mode is disabled, pulling NSS LOW can trigger a Master Mode Fault (`MODF`).
-* **Software Slave Management (`SSM = 1`)**: The external NSS pin is freed for normal GPIO use. The internal NSS signal is driven by the value of the **`SSI` (Internal Slave Select)** bit in `SPI_CR1`.
-  * For Master Mode with `SSM=1`: **`SSI` MUST be set to `1`** to avoid MODF errors and forced reversion to slave mode.
+### 3.3 SPI Full-Duplex Transmit & Receive Sequence Diagram
 
-### 3.3 Data Transmission & Flag Synchronization
-* **`TXE` (Transmit Buffer Empty)**: Indicates `SPI_DR` is empty and ready for the next data byte/word.
-* **`RXNE` (Receive Buffer Not Empty)**: Indicates incoming data in `SPI_DR` is ready to be read.
-* **`BSY` (Busy Flag)**: Set when SPI is actively shifting data.
-  * **Critical Closing Sequence**:
-    1. Wait until `TXE = 1`.
-    2. Wait until `BSY = 0` (guarantees the last bit physically left the shift register).
-    3. Clear overrun/dummy data if necessary.
-    4. Disable SPI (`SPE = 0`).
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant Master as STM32 SPI Master
+    participant Slave as SPI Slave Device
+
+    App->>Master: Enable SPI (CR1: SPE=1)
+    loop For each Byte in Transfer (Len)
+        App->>Master: Wait until TXE == 1
+        App->>Master: Write TX Byte / Dummy Byte to DR
+        par Master to Slave
+            Master->>Slave: Shift out TX byte on MOSI
+        and Slave to Master
+            Slave->>Master: Shift in RX byte on MISO
+        end
+        App->>Master: Wait until RXNE == 1 (Byte received)
+        App->>Master: Read incoming byte from DR into RxBuffer
+    end
+    App->>Master: Wait until BSY == 0
+    App->>Master: Disable SPI (CR1: SPE=0)
+```
 
 ---
 
 ## 4. I2C Driver
 
 ### 4.1 Bus Architecture & Signal Dynamics
-* **Protocol Type**: Synchronous, Half-Duplex, 2-Wire (SCL, SDA), Multi-Master/Multi-Slave.
 * **Physical Layer**: Open-Drain on both SCL and SDA with external pull-up resistors ($R_P$).
 * **Speed Standards**:
   * Standard Mode (Sm): Up to **100 kHz** ($T_{\text{high}} = T_{\text{low}} = 5\mu\text{s}$).
   * Fast Mode (Fm): Up to **400 kHz** (Duty cycle 2:1 or 16:9).
 
-### 4.2 Pull-Up Resistor Calculation & Physical Bus Dynamics
-$$R_{p(\text{min})} = \frac{V_{DD} - V_{OL(\text{max})}}{I_{OL}} = \frac{3.3\text{V} - 0.4\text{V}}{3\text{ mA}} \approx 966\,\Omega$$
-$$R_{p(\text{max})} = \frac{t_r}{0.8473 \times C_b}$$
-*(Where $t_r = 1000\text{ ns}$ for Sm, $300\text{ ns}$ for Fm; $C_b$ is total bus capacitance).*
-* Typical practical value for breadboards / short buses: **$2.2\text{ k}\Omega$ to $4.7\text{ k}\Omega$**.
-* **Why Internal Pull-ups (~40kΩ) Fail for RX**:
-  * Internal pull-ups are too weak ($40\text{ k}\Omega$), producing very slow rise times ($RC > 1\mu\text{s}$).
-  * TX works because STM32 drives LOW actively; RX fails because floating slave release and STOP conditions cannot snap to $V_{DD}$ fast enough, leading to false bus-busy detection (`BUSY=1` in `SR2`) and timeout lockups.
-
-### 4.3 Clock Control Register (`CCR`) and `TRISE` Calculations
-1. **Peripheral Frequency (`FREQ` in `CR2`)**:
-   $$\text{FREQ} = \frac{f_{\text{PCLK1}}}{1\text{ MHz}}$$ (Must be at least 2 MHz for Sm, 14 MHz for Fm).
-2. **Standard Mode CCR Calculation**:
-   $$T_{\text{SCL}} = 2 \times \text{CCR} \times T_{\text{PCLK1}} \implies \mathbf{\text{CCR} = \frac{f_{\text{PCLK1}}}{2 \times f_{\text{SCL}}}}$$
-3. **TRISE Register Calculation**:
-   $$\text{TRISE} = \left(\frac{t_{r(\text{max})}}{T_{\text{PCLK1}}}\right) + 1 = \left(t_{r(\text{max})} \times f_{\text{PCLK1}}\right) + 1$$
-   * For Standard Mode ($t_{r(\text{max})} = 1000\text{ ns} = 1\mu\text{s}$): $\text{TRISE} = \left(\frac{f_{\text{PCLK1}}}{1\text{ MHz}}\right) + 1 = \text{FREQ} + 1$.
-
-### 4.4 I2C Read Sequence (The 1-Byte vs Multi-Byte Rule)
+### 4.2 I2C Master Transmit Sequence Diagram
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant M as STM32 Master
-    participant S as I2C Slave
-    Note over M,S: Single Byte Reception Sequence (Len = 1)
-    M->>S: Generate START (CR1: START=1)
-    M->>S: Send Slave Address + READ (0x68 | 0x01)
-    S-->>M: ACK
-    Note over M: ADDR flag set in SR1
-    critical Hardware Requirement for 1-Byte Read
-        M->>M: 1. Disable ACKing (CR1: ACK=0)
-        M->>M: 2. Clear ADDR (Read SR1 followed by SR2)
-        M->>M: 3. Generate STOP (CR1: STOP=1)
+    participant App as Application
+    participant Master as STM32 I2C Master
+    participant Slave as I2C Slave Device
+
+    App->>Master: Call I2C_MasterTransmit()
+    Master->>Master: Generate START (CR1: START=1)
+    Master->>Master: Wait until SB == 1 (SR1)
+    Master->>Slave: Write (SlaveAddr << 1 | 0) to DR
+    Slave-->>Master: ACK
+    Master->>Master: ADDR flag set in SR1
+    Master->>Master: Clear ADDR (Read SR1 followed by SR2)
+    loop For each Data Byte (Len)
+        Master->>Master: Wait until TXE == 1 (SR1)
+        Master->>Slave: Write data byte to DR
+        Slave-->>Master: ACK
     end
-    M->>S: Master NACKs incoming byte
-    M->>M: Wait for RXNE=1, Read DR into buffer
+    Master->>Master: Wait until TXE == 1 and BTF == 1 (Byte Transfer Finished)
+    Master->>Slave: Generate STOP Condition (CR1: STOP=1)
+    Master->>App: Return
 ```
 
-* **Multi-Byte Read Sequence (`Len > 1`)**:
-  1. Clear ADDR flag (Read `SR1` then `SR2`).
-  2. For each byte until `Len - 2`: wait for `RXNE=1`, read `DR`.
-  3. When `remaining == 2`:
-     * Disable ACK (`ACK = 0`).
-     * Generate STOP condition (`STOP = 1`).
-     * Wait for `RXNE=1`, read byte $N-1$.
-     * Wait for `RXNE=1`, read last byte $N$.
+### 4.3 I2C Single-Byte Read Sequence Diagram (Len = 1)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Master as STM32 I2C Master
+    participant Slave as I2C Slave Device
+
+    Master->>Master: Generate START (CR1: START=1)
+    Master->>Master: Wait until SB == 1 (SR1)
+    Master->>Slave: Write (SlaveAddr << 1 | 1) to DR (Read mode)
+    Slave-->>Master: ACK
+    Master->>Master: ADDR flag set in SR1
+    critical Hardware Mandatory Sequence for Len = 1
+        Master->>Master: 1. Disable ACKing (CR1: ACK=0)
+        Master->>Master: 2. Clear ADDR (Read SR1 followed by SR2)
+        Master->>Master: 3. Generate STOP (CR1: STOP=1)
+    end
+    Slave->>Master: Slave clocks in single byte
+    Master->>Slave: Master sends NACK (primed by ACK=0)
+    Master->>Master: Wait until RXNE == 1 (SR1)
+    Master->>Master: Read byte from DR into RxBuffer
+```
+
+### 4.4 I2C Multi-Byte Read Sequence Diagram (Len > 1)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Master as STM32 I2C Master
+    participant Slave as I2C Slave Device
+
+    Master->>Master: Ensure ACKing enabled (CR1: ACK=1)
+    Master->>Master: Generate START (CR1: START=1)
+    Master->>Master: Wait until SB == 1
+    Master->>Slave: Write (SlaveAddr << 1 | 1) to DR
+    Slave-->>Master: ACK
+    Master->>Master: ADDR flag set in SR1
+    Master->>Master: Clear ADDR (Read SR1 followed by SR2)
+    loop While remaining bytes > 2
+        Master->>Master: Wait until RXNE == 1
+        Master->>Master: Read byte from DR into RxBuffer
+        Master->>Slave: Master sends ACK automatically
+    end
+    Note over Master,Slave: When exactly 2 bytes remain (Len == 2)
+    Master->>Master: Wait until RXNE == 1
+    Master->>Master: 1. Disable ACKing (CR1: ACK=0)
+    Master->>Master: 2. Generate STOP Condition (CR1: STOP=1)
+    Master->>Master: 3. Read byte (N-1) from DR
+    Master->>Slave: Master sends NACK on last byte
+    Master->>Master: Wait until RXNE == 1
+    Master->>Master: 4. Read last byte (N) from DR
+```
+
+### 4.5 I2C Non-Blocking Interrupt ISR State Machine
+
+```mermaid
+stateDiagram-v2
+    [*] --> READY: Driver Initialized
+    READY --> BUSY_IN_TX: I2C_MasterTransmitIT() (Generate START, Enable ITBUFEN/ITEVTEN)
+    READY --> BUSY_IN_RX: I2C_MasterReceiveIT() (Generate START, Enable ITBUFEN/ITEVTEN)
+
+    state BUSY_IN_TX {
+        SB_TX: SB Event (Load SlaveAddr + Write to DR)
+        ADDR_TX: ADDR Event (Clear ADDR flag)
+        TXE_TX: TXE Event (Load next byte to DR, Decrement TxLen)
+        BTF_TX: BTF Event (TxLen==0 -> Generate STOP, Disable IRQs, Set State READY)
+        
+        SB_TX --> ADDR_TX: Addr ACKed
+        ADDR_TX --> TXE_TX: ADDR Cleared
+        TXE_TX --> TXE_TX: More bytes remaining
+        TXE_TX --> BTF_TX: Last byte loaded
+    }
+
+    state BUSY_IN_RX {
+        SB_RX: SB Event (Load SlaveAddr + Read to DR)
+        ADDR_RX: ADDR Event (If RxSize==1: ACK=0 -> Clear ADDR)
+        RXNE_RX: RXNE Event (Read DR to buffer, Decrement RxLen)
+        STOP_RX: RxLen==0 (Disable IRQs, Set State READY)
+
+        SB_RX --> ADDR_RX: Addr ACKed
+        ADDR_RX --> RXNE_RX: ADDR Cleared
+        RXNE_RX --> RXNE_RX: RxLen > 2
+        RXNE_RX --> STOP_RX: RxLen == 0
+    }
+
+    BUSY_IN_TX --> READY: Callback (I2C_EV_TX_CMPLT)
+    BUSY_IN_RX --> READY: Callback (I2C_EV_RX_CMPLT)
+```
 
 ---
 
@@ -189,17 +296,12 @@ Idle (1) ──┐      ┌───┬───┬───┬───┬─�
            START   D0  D1  D2  D3  D4  D5  D6  D7  PARITY STOP
 ```
 
-### 5.2 Oversampling Mechanics (`OVER8`)
-* **Oversampling by 16 (`OVER8 = 0`)**: Bit duration split into 16 clock ticks. Middle samples at **8, 9, 10** with 2/3 majority voting. Maximum noise tolerance.
-* **Oversampling by 8 (`OVER8 = 1`)**: Bit duration split into 8 clock ticks. Middle samples at **4, 5, 6**. Doubles maximum achievable baud rate ($\frac{f_{\text{PCLK}}}{8}$).
-
-### 5.3 Fixed-Point Baud Rate Calculation (`BRR`)
+### 5.2 Fixed-Point Baud Rate Calculation (`BRR`)
 The exact formula:
 $$\text{Baud Rate} = \frac{f_{\text{PCLK}}}{8 \times (2 - \text{OVER8}) \times \text{USARTDIV}}$$
 
-To calculate accurately in pure integer C without floating-point math:
 ```c
-// Scaled by 100 to preserve 2 decimal places:
+// Scaled by 100 to preserve 2 decimal places in integer arithmetic:
 if(OVER8 == 1) {
     usartdiv = (25 * PCLK) / (2 * BaudRate);
 } else {
@@ -210,12 +312,66 @@ M_part = usartdiv / 100;
 F_part = usartdiv - (M_part * 100);
 
 if(OVER8 == 1) {
-    F_part = (((F_part * 8) + 50) / 100) & 0x07; // +50 implements round-to-nearest
+    F_part = (((F_part * 8) + 50) / 100) & 0x07; // +50 performs round-to-nearest
 } else {
     F_part = (((F_part * 16) + 50) / 100) & 0x0F;
 }
 
 pUSARTx->BRR = (M_part << 4) | F_part;
+```
+
+### 5.3 USART Transmit Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Application
+    participant USART as STM32 USART
+    participant Receiver as External Receiver (PC/Arduino)
+
+    App->>USART: Call USART_SendData(pTxBuffer, Len)
+    loop For each Byte / Word in Transfer
+        USART->>USART: Poll until TXE flag == 1 (SR: TXE=1)
+        alt 9-bit word length & NO Parity
+            USART->>USART: DR = *(uint16_t*)pTxBuffer & 0x01FF
+            USART->>USART: Advance pTxBuffer by 2 bytes
+        else 8-bit word length OR 9-bit with Parity
+            USART->>USART: DR = *pTxBuffer & 0xFF
+            USART->>USART: Advance pTxBuffer by 1 byte
+        end
+        USART->>Receiver: Transmit Start bit, Data bits, Parity, Stop bit
+    end
+    USART->>USART: Poll until TC flag == 1 (Transmission Complete)
+    USART->>App: Return
+```
+
+### 5.4 USART Receive Sequence Diagram
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Sender as External Transmitter (PC/Arduino)
+    participant USART as STM32 USART
+    participant App as Application
+
+    App->>USART: Call USART_ReceiveData(pRxBuffer, Len)
+    loop For each Byte / Word in Reception
+        USART->>USART: Poll until RXNE flag == 1 (SR: RXNE=1)
+        alt 9-bit word length & NO Parity
+            USART->>USART: *(uint16_t*)pRxBuffer = DR & 0x01FF
+            USART->>USART: Advance pRxBuffer by 2 bytes
+        else 9-bit word length WITH Parity
+            USART->>USART: *pRxBuffer = DR & 0xFF (Parity bit stripped)
+            USART->>USART: Advance pRxBuffer by 1 byte
+        else 8-bit word length & NO Parity
+            USART->>USART: *pRxBuffer = DR & 0xFF
+            USART->>USART: Advance pRxBuffer by 1 byte
+        else 8-bit word length WITH Parity
+            USART->>USART: *pRxBuffer = DR & 0x7F (7 data bits)
+            USART->>USART: Advance pRxBuffer by 1 byte
+        end
+    end
+    USART->>App: Return
 ```
 
 ---
@@ -263,4 +419,3 @@ pUSARTx->BRR = (M_part << 4) | F_part;
 
 8. **Q: Why does 9-bit word length require 2 bytes of buffer advance only when Parity is disabled?**
    * **A**: In STM32 USART, the `M` bit sets the total frame size. If 9-bit is selected and parity is enabled, the 9th bit is generated automatically by the hardware parity engine from the 8 data bits provided in a 1-byte user buffer. If parity is disabled, all 9 bits are data provided by the user, which cannot fit in an 8-bit `uint8_t` and must be stored as a 16-bit (`uint16_t`) integer (advancing 2 bytes per transfer).
-
